@@ -8,33 +8,30 @@ const RX = /^(.*)access_token=(.*)$/;
 // from that endpoint covered the entire world map
 
 // For https://projects.propublica.org/miseducation/ page
-// const northernBound = 49.382808;
-// const southernBound = 24.521208;
-// const easternBound = -66.945392;
-// const westernBound = -124.736342;
+const northernBound = 49.382808;
+const southernBound = 24.521208;
+const easternBound = -66.945392;
+const westernBound = -124.736342;
 
 // For testing: Massachusetts
-const northernBound = 42.886589;
-const southernBound = 41.237964;
-const easternBound = -69.928393;
-const westernBound = -73.508142;
+// const northernBound = 42.886589;
+// const southernBound = 41.237964;
+// const easternBound = -69.928393;
+// const westernBound = -73.508142;
 
 // TODO: Figure out what these should be from Mapbox API
 const minZoomLevel = 2;
-const maxZoomLevel = 8;
+const maxZoomLevel = 10;
 
 // Time to wait after each API call to Mapbox, in milliseconds (ms)
-const waitIntervalMs = 200;
+const waitIntervalMs = 50;
 
 // Increment for each cardinal direction change, in degrees
 const fetchTileIncrement = 1;
 
 // TODO: Figure out what these should be from Mapbox API
 const tileSets = [
-  "mapbox.mapbox-streets-v7",
-  "propublica.schools-countries",
-  "mapbox.mapbox-terrain-v2",
-  "propublica.schools-states",
+  "mapbox.mapbox-streets-v7,propublica.schools-countries,mapbox.mapbox-terrain-v2,propublica.schools-states",
   "propublica.opp_gap-districts-black",
   "propublica.opp_gap-districts-hispanic"
 ];
