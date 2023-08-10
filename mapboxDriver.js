@@ -1,5 +1,9 @@
 const delay = ms => new Promise(res => setTimeout(res, ms));
 
+// GEOGRAPHIC BOUNDS: latitude/longitude, in degrees
+// TODO: Figure out what these should be from Mapbox API
+// getBoundsFromApi below was an attempt, but the bounds returned
+// from that endpoint covered the entire world map
 // Time to wait after each API call to Mapbox, in milliseconds (ms)
 const waitIntervalMs = 50;
 
@@ -9,32 +13,38 @@ const fetchTileIncrement = 1;
 export default async ({data, page, crawler}) => {
   await page.setRequestInterception(true);
 
+  // TODO
+  // We need to intercept to find out all the stats we need: https://api.mapbox.com/v4/propublica.opp_gap-districts-black.json?secure&access_token=pk.eyJ1IjoicHJvcHVibGljYSIsImEiOiJjamw2MzFyaGIwbmpjM3NudHIydXh1cDN4In0.yzUpkZtOL4uS_0xpSXA_-g
+  // There's one for each "tile set"
+  // So long as we can find that json, for all the tilsets
+  // We can make this generic and easy af
+  //let accessToken = "";
   let mapBoxURLs = [];
-  
+  let fontsURLs = [];
+
   page.on("request", request => {
     const url = request.url();
     if (url.includes(".json")) {
       mapBoxURLs.push(url);
     }
-    
+    if (url.includes("fonts")) {
+      fontsURLs.push(url);
+    }
     request.continue();
   });
 
   await crawler.loadPage(page, data);
 
-  //await fetchFonts(page, accessToken);
+  const zoomButton = await page.$("button.mapboxgl-ctrl-icon:nth-child(1)");
+  console.log(zoomButton);
+  // Zoom in 3 times to get all the font names
+  await zoomButton.click();
+  await zoomButton.click();
+  await zoomButton.click();
+
+  await fetchFonts(page, fontsURLs);
   await fetchTiles(page, mapBoxURLs);
 };
-
-function getAccessToken(url) {
-  // Get access token from Mapbox URL
-  const RX = /^(.*)access_token=(.*)$/;
-  const m = url.match(RX);
-  if (!m) {
-    return "";
-  }
-  return m[2];
-}
 
 async function getMapBoxJson(url) {
   console.log(`getting json for ${url}`);
@@ -43,18 +53,29 @@ async function getMapBoxJson(url) {
   });
 }
 
-async function fetchFonts(page, accessToken) {
-  for (let i = 0; i <= 65280; i += 256) {
-    const medium_font_url = `https://api.mapbox.com/fonts/v1/propublica/DIN%20Offc%20Pro%20Medium,Arial%20Unicode%20MS%20Regular/${i}-${i+255}.pbf?access_token=${accessToken}`;
-    const regular_font_url = `https://api.mapbox.com/fonts/v1/propublica/DIN%20Offc%20Pro%20Regular,Arial%20Unicode%20MS%20Regular/${i}-${i+255}.pbf?access_token=${accessToken}`;
-    const bold_font_url = `https://api.mapbox.com/fonts/v1/propublica/DIN%20Offc%20Pro%20Bold,Arial%20Unicode%20MS%20Regular/${i}-${i+255}.pbf?access_token=${accessToken}`;
-    const urls = [medium_font_url, regular_font_url, bold_font_url];
-    for (let j = 0; j < urls.length; j++) {
-      const url = urls[j];
+function dedupeFonts(fontsURLs) {
+  const setOfFonts = new Set();
+  for (let fontIndex = 0; fontIndex < fontsURLs.length; fontIndex++) {
+    let font = fontsURLs[fontIndex];
+    font = font.replace(/[0-9]{1,5}-[0-9]{1,5}\.pbf/, "{i}-{j}.pbf");
+    setOfFonts.add(font);
+  }
+  return Array.from(setOfFonts);
+}
+
+async function fetchFonts(page, fontsURLs) {
+  const dedupedFontURLs = dedupeFonts(fontsURLs);
+  console.log(dedupedFontURLs.length);
+  for (let fontIndex = 0; fontIndex < dedupedFontURLs.length; fontIndex++) {
+    let ogFontURL = dedupedFontURLs[fontIndex];
+    for (let i = 0; i <= 65280; i += 256) {
+      let currentFontURL = ogFontURL;
+      currentFontURL = currentFontURL.replace("{i}", i);
+      currentFontURL = currentFontURL.replace("{j}", i+255);
       const status = await page.evaluate(params => {
-        return fetch(params.url).then(res => res.status);
-      }, {url});
-      console.log(url, status);
+        return fetch(params.currentFontURL).then(res => res.status);
+      }, {currentFontURL});
+      console.log(currentFontURL, status);
     }
   }
 }
