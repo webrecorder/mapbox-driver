@@ -1,10 +1,5 @@
 const delay = ms => new Promise(res => setTimeout(res, ms));
 
-// GEOGRAPHIC BOUNDS: latitude/longitude, in degrees
-// TODO: Figure out what these should be from Mapbox API
-// getBoundsFromApi below was an attempt, but the bounds returned
-// from that endpoint covered the entire world map
-// Time to wait after each API call to Mapbox, in milliseconds (ms)
 const waitIntervalMs = 50;
 
 // Increment for each cardinal direction change, in degrees
@@ -13,12 +8,6 @@ const fetchTileIncrement = 1;
 export default async ({data, page, crawler}) => {
   await page.setRequestInterception(true);
 
-  // TODO
-  // We need to intercept to find out all the stats we need: https://api.mapbox.com/v4/propublica.opp_gap-districts-black.json?secure&access_token=pk.eyJ1IjoicHJvcHVibGljYSIsImEiOiJjamw2MzFyaGIwbmpjM3NudHIydXh1cDN4In0.yzUpkZtOL4uS_0xpSXA_-g
-  // There's one for each "tile set"
-  // So long as we can find that json, for all the tilsets
-  // We can make this generic and easy af
-  //let accessToken = "";
   let mapBoxURLs = [];
   let fontsURLs = [];
 
@@ -36,7 +25,6 @@ export default async ({data, page, crawler}) => {
   await crawler.loadPage(page, data);
 
   const zoomButton = await page.$("button.mapboxgl-ctrl-icon:nth-child(1)");
-  console.log(zoomButton);
   // Zoom in 3 times to get all the font names
   await zoomButton.click();
   await zoomButton.click();
@@ -65,7 +53,6 @@ function dedupeFonts(fontsURLs) {
 
 async function fetchFonts(page, fontsURLs) {
   const dedupedFontURLs = dedupeFonts(fontsURLs);
-  console.log(dedupedFontURLs.length);
   for (let fontIndex = 0; fontIndex < dedupedFontURLs.length; fontIndex++) {
     let ogFontURL = dedupedFontURLs[fontIndex];
     for (let i = 0; i <= 65280; i += 256) {
