@@ -1,79 +1,73 @@
 const delay = ms => new Promise(res => setTimeout(res, ms));
 
-const RX = /^(.*)access_token=(.*)$/;
-
-// GEOGRAPHIC BOUNDS: latitude/longitude, in degrees
-// TODO: Figure out what these should be from Mapbox API
-// getBoundsFromApi below was an attempt, but the bounds returned
-// from that endpoint covered the entire world map
-
-// For https://projects.propublica.org/miseducation/ page
-const northernBound = 49.382808;
-const southernBound = 24.521208;
-const easternBound = -66.945392;
-const westernBound = -124.736342;
-
-// For testing: Massachusetts
-// const northernBound = 42.886589;
-// const southernBound = 41.237964;
-// const easternBound = -69.928393;
-// const westernBound = -73.508142;
-
-// TODO: Figure out what these should be from Mapbox API
-const minZoomLevel = 2;
-const maxZoomLevel = 10;
-
-// Time to wait after each API call to Mapbox, in milliseconds (ms)
 const waitIntervalMs = 50;
 
 // Increment for each cardinal direction change, in degrees
 const fetchTileIncrement = 1;
 
-// TODO: Figure out what these should be from Mapbox API
-const tileSets = [
-  "mapbox.mapbox-streets-v7,propublica.schools-countries,mapbox.mapbox-terrain-v2,propublica.schools-states",
-  "propublica.opp_gap-districts-black",
-  "propublica.opp_gap-districts-hispanic"
-];
-
-const tilesBaseUrlA = "https://a.tiles.mapbox.com/v4/";
-const tilesBaseUrlB = "https://b.tiles.mapbox.com/v4/"
-const tileFormat = ".vector.pbf";
-
-
 export default async ({data, page, crawler}) => {
   await page.setRequestInterception(true);
 
-  let accessToken = "";
-  
+  let mapBoxURLs = [];
+  let fontsURLs = [];
+
   page.on("request", request => {
     const url = request.url();
-
-    if (accessToken.length === 0) {
-      const tokenAttempt = getAccessToken(url);
-      if (tokenAttempt.length > 0) {
-        accessToken = tokenAttempt;
-      }
+    if (url.includes(".json")) {
+      mapBoxURLs.push(url);
     }
-    
+    if (url.includes("fonts")) {
+      fontsURLs.push(url);
+    }
     request.continue();
   });
 
   await crawler.loadPage(page, data);
 
-  await fetchTiles(page, accessToken);
+  const zoomButton = await page.$("button.mapboxgl-ctrl-icon:nth-child(1)");
+  // Zoom in 3 times to get all the font names
+  await zoomButton.click();
+  await zoomButton.click();
+  await zoomButton.click();
+
+  await fetchFonts(page, fontsURLs);
+  await fetchTiles(page, mapBoxURLs);
 };
 
-function getAccessToken(url) {
-  // Get access token from Mapbox URL
-  const m = url.match(RX);
-  if (!m) {
-    return "";
-  }
-  return m[2];
+async function getMapBoxJson(url) {
+  console.log(`getting json for ${url}`);
+  return await fetch(url).then((response) => {
+    return response.json();
+  });
 }
 
-async function fetchTiles(page, accessToken) {
+function dedupeFonts(fontsURLs) {
+  const setOfFonts = new Set();
+  for (let fontIndex = 0; fontIndex < fontsURLs.length; fontIndex++) {
+    let font = fontsURLs[fontIndex];
+    font = font.replace(/[0-9]{1,5}-[0-9]{1,5}\.pbf/, "{i}-{j}.pbf");
+    setOfFonts.add(font);
+  }
+  return Array.from(setOfFonts);
+}
+
+async function fetchFonts(page, fontsURLs) {
+  const dedupedFontURLs = dedupeFonts(fontsURLs);
+  for (let fontIndex = 0; fontIndex < dedupedFontURLs.length; fontIndex++) {
+    let ogFontURL = dedupedFontURLs[fontIndex];
+    for (let i = 0; i <= 65280; i += 256) {
+      let currentFontURL = ogFontURL;
+      currentFontURL = currentFontURL.replace("{i}", i);
+      currentFontURL = currentFontURL.replace("{j}", i+255);
+      const status = await page.evaluate(params => {
+        return fetch(params.currentFontURL).then(res => res.status);
+      }, {currentFontURL});
+      console.log(currentFontURL, status);
+    }
+  }
+}
+
+async function fetchTiles(page, mapBoxURLs) {
   // This approach works by iterating through the various longitudes, latitudes,
   // and zoom levels specified above, fetching vector tiles from the Vector Tile API
   // for each coordinate pair.
@@ -89,35 +83,42 @@ async function fetchTiles(page, accessToken) {
   // Fair warning: at higher zoom levels or for big maps, this may return a loooot of tiles.
   // There's almost certainly lots of room to optimize here. Mapbox asks that API requests
   // are kept under 100,000 calls/min, and will rame limit if that is exceeded.
-  for (let x = westernBound; x <= easternBound; x+= fetchTileIncrement) {
-    for (let y = southernBound; y <= northernBound; y+= fetchTileIncrement) {
-      for (let z = minZoomLevel; z <= maxZoomLevel; z+= 1) {
-        // Calculate location
-        const tileX = lon2tile(x, z);
-        const tileY = lat2tile(y, z);
-        console.log(`Longitude: ${x}; Latitude: ${y}; Zoom: ${z}`);
+  for (let jsonIndex = 0; jsonIndex < mapBoxURLs.length; jsonIndex++) {
+    let json = await getMapBoxJson(mapBoxURLs[jsonIndex]);
+    try {
+      const [westernBound, southernBound, easternBound, northernBound] = json["bounds"];
+      const minZoomLevel = json["minzoom"];
+      const maxZoomLevel = json["maxzoom"];
+      const tileSets = json["tiles"];
+      for (let x = westernBound; x <= easternBound; x+= fetchTileIncrement) {
+        for (let y = southernBound; y <= northernBound; y+= fetchTileIncrement) {
+          for (let z = minZoomLevel; z <= maxZoomLevel; z+= 1) {
+            // Calculate location
+            const tileX = lon2tile(x, z);
+            const tileY = lat2tile(y, z);
+            console.log(`Longitude: ${x}; Latitude: ${y}; Zoom: ${z}`);
 
-        // Fetch vector tiles from a.tiles.mapbox.com and b.tiles.mapbox.com
-        for (let t = 0; t < tileSets.length; t++) {
-          const tileset = tileSets[t];
-          const urlA = `${tilesBaseUrlA}${tileset}/${z}/${tileX}/${tileY}${tileFormat}?access_token=${accessToken}`;
-          const urlB = `${tilesBaseUrlB}${tileset}/${z}/${tileX}/${tileY}${tileFormat}?access_token=${accessToken}`;
+            // Fetch vector tiles from a.tiles.mapbox.com and b.tiles.mapbox.com
+            for (let t = 0; t < tileSets.length; t++) {
+              let url = tileSets[t];
+              url = url.replace("{x}", tileX);
+              url = url.replace("{y}", tileY);
+              url = url.replace("{z}", z);
+              const status = await page.evaluate(params => {
+                return fetch(params.url).then(res => res.status);
+              }, {url});
 
-          const fetchUrls = [urlA, urlB];
-          for (let i = 0; i < fetchUrls.length; i++) {
-            const url = fetchUrls[i];
-            const status = await page.evaluate(params => {
-              return fetch(params.url).then(res => res.status);
-            }, {url});
+              console.log(url, status);
 
-            console.log(url, status);
-
-            await delay(waitIntervalMs);
+              await delay(waitIntervalMs);
+            }
           }
         }
-      }
+      }   
+    } catch (TypeError) {
+      console.log(`Unable to parse JSON for ${mapBoxURLs[jsonIndex]}`);
     }
-  }   
+  }
 }
 
 function lon2tile(lon, zoom) {
@@ -129,23 +130,3 @@ function lat2tile(lat, zoom) {
   // Source: https://wiki.openstreetmap.org/wiki/Slippy_map_tilenames#ECMAScript_(JavaScript/ActionScript,_etc.)
   return (Math.floor((1-Math.log(Math.tan(lat*Math.PI/180) + 1/Math.cos(lat*Math.PI/180))/Math.PI)/2 *Math.pow(2,zoom)));
 }
-
-// async function getBoundsFromApi(token) {
-//  // Fetch info on all datasets, including bounds
-//  // TODO: Generalize this to work with dataset list gathered from requests
-//  // TODO: Datasets that are fetched separately on site but included below:
-//  // https://api.mapbox.com/v4/propublica.opp_gap-districts-black.json?secure&access_token=TOKEN
-//  // https://api.mapbox.com/v4/propublica.opp_gap-districts-hispanic.json?secure&access_token=TOKEN
-
-//  // TODO: These bounds may not actually be very useful, they seem to be
-//   // returning a region covering the whole world - but the `center` value
-//   // returned by that API might be a good starting point?
-//   // To call:
-//   // const bounds = await getBoundsFromApi(accessToken);
-
-//   const fetchUrl = `https://api.mapbox.com/v4/mapbox.mapbox-streets-v7,propublica.schools-countries,mapbox.mapbox-terrain-v2,propublica.schools-states,propublica.opp_gap-districts-black,propublica.opp_gap-districts-hispanic.json?secure&access_token=${token}`;
-//   const r = await fetch(fetchUrl);
-//   const data = await r.json();
-//   console.log(data);
-//   return data.bounds;
-// }
